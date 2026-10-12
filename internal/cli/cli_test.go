@@ -240,6 +240,9 @@ func TestInvalidFlagsMakeNoRequest(t *testing.T) {
 		{"video", "update", "vid"},
 		{"video", "update", "vid", "--title", strings.Repeat("x", 101)},
 		{"video", "rate", "vid", "love"},
+		{"video", "update", "vid", "--publish-at", "2001-01-01T00:00:00Z"},
+		{"video", "update", "vid", "--publish-at", "tomorrow"},
+		{"video", "update", "vid", "--publish-at", "2031-01-01T00:00:00Z", "--privacy", "public"},
 	} {
 		if _, _, err := run(t, "", args...); err == nil {
 			t.Errorf("ytctl %s succeeded, want an error", strings.Join(args, " "))
@@ -329,6 +332,63 @@ func TestVideoUpdatePrivacyKeepsOtherStatusFields(t *testing.T) {
 	}
 	if dig(put.Body, "status", "uploadStatus") != nil {
 		t.Error("read-only uploadStatus was sent back")
+	}
+}
+
+func TestVideoUpdateReschedule(t *testing.T) {
+	api := newFakeAPI(t)
+	api.responses["GET /youtube/v3/videos"] = currentVideo
+
+	if _, _, err := run(t, "", "video", "update", "vid", "--publish-at", "2031-05-06T09:00:00+08:00"); err != nil {
+		t.Fatal(err)
+	}
+	put := api.only("PUT /youtube/v3/videos")
+	wantQuery(t, put, map[string]string{"part": "status"})
+	want := map[string]any{"publishAt": "2031-05-06T01:00:00Z", "privacyStatus": "private", "embeddable": false, "license": "creativeCommon", "selfDeclaredMadeForKids": true}
+	for k, v := range want {
+		if got := dig(put.Body, "status", k); got != v {
+			t.Errorf("status.%s = %#v, want %#v", k, got, v)
+		}
+	}
+	if dig(put.Body, "snippet") != nil {
+		t.Error("snippet was sent although only the schedule changed")
+	}
+}
+
+func TestVideoUpdateCancelSchedule(t *testing.T) {
+	api := newFakeAPI(t)
+	api.responses["GET /youtube/v3/videos"] = currentVideo
+
+	if _, _, err := run(t, "", "video", "update", "vid", "--publish-at", ""); err != nil {
+		t.Fatal(err)
+	}
+	put := api.only("PUT /youtube/v3/videos")
+	if dig(put.Body, "status", "publishAt") != nil || dig(put.Body, "status", "privacyStatus") != "private" {
+		t.Errorf("status = %v, want private with no publishAt", dig(put.Body, "status"))
+	}
+}
+
+func TestVideoUpdateWillNotTakeALiveVideoOfflineToScheduleIt(t *testing.T) {
+	api := newFakeAPI(t)
+	api.responses["GET /youtube/v3/videos"] = `{"items":[{"id":"vid","snippet":{"title":"T"},"status":{"privacyStatus":"public"}}]}`
+
+	_, _, err := run(t, "", "video", "update", "vid", "--publish-at", "2031-05-06T09:00:00Z")
+	if err == nil || !strings.Contains(err.Error(), "--privacy private") {
+		t.Errorf("err = %v, want a refusal that names --privacy private", err)
+	}
+	for _, r := range api.routes() {
+		if strings.HasPrefix(r, "PUT") {
+			t.Fatal("the video was updated anyway")
+		}
+	}
+
+	// Asked for explicitly, it goes through.
+	if _, _, err := run(t, "", "video", "update", "vid", "--publish-at", "2031-05-06T09:00:00Z", "--privacy", "private"); err != nil {
+		t.Fatal(err)
+	}
+	put := api.only("PUT /youtube/v3/videos")
+	if dig(put.Body, "status", "privacyStatus") != "private" || dig(put.Body, "status", "publishAt") != "2031-05-06T09:00:00Z" {
+		t.Errorf("status = %v", dig(put.Body, "status"))
 	}
 }
 

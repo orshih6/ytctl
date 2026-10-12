@@ -214,12 +214,9 @@ func buildUpload(opts uploadOptions, now time.Time) (*youtube.Video, error) {
 		ForceSendFields: []string{"SelfDeclaredMadeForKids"},
 	}
 	if opts.PublishAt != "" {
-		at, err := time.Parse(time.RFC3339, opts.PublishAt)
+		at, err := parsePublishAt(opts.PublishAt, now)
 		if err != nil {
-			return nil, fmt.Errorf("invalid --publish-at %q: use a full timestamp with a UTC offset, like 2030-01-31T09:00:00+08:00", opts.PublishAt)
-		}
-		if !at.After(now) {
-			return nil, fmt.Errorf("invalid --publish-at %q: that time has already passed", opts.PublishAt)
+			return nil, err
 		}
 		status.PublishAt = at.UTC().Format(time.RFC3339)
 		status.PrivacyStatus = "private"
@@ -234,6 +231,19 @@ func buildUpload(opts uploadOptions, now time.Time) (*youtube.Video, error) {
 		},
 		Status: status,
 	}, nil
+}
+
+// parsePublishAt reads a --publish-at value, which must be a full
+// timestamp later than now.
+func parsePublishAt(value string, now time.Time) (time.Time, error) {
+	at, err := time.Parse(time.RFC3339, value)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("invalid --publish-at %q: use a full timestamp with a UTC offset, like 2030-01-31T09:00:00+08:00", value)
+	}
+	if !at.After(now) {
+		return time.Time{}, fmt.Errorf("invalid --publish-at %q: that time has already passed", value)
+	}
+	return at, nil
 }
 
 // progress reports an upload's advance on one rewritten line. It only

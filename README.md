@@ -74,7 +74,7 @@ automatically. `ytctl auth logout` revokes it and deletes the file.
 | `ytctl video list [--channel ID]` | List your videos, or a channel's |
 | `ytctl video search <query>` | Search YouTube |
 | `ytctl video get <id>` | Details and statistics |
-| `ytctl video update <id>` | Change title, description, tags, category, privacy |
+| `ytctl video update <id>` | Change title, description, tags, category, privacy, schedule |
 | `ytctl video rate <id> like\|dislike\|none` | Rate a video |
 | `ytctl video thumbnail <id> <image>` | Set a custom thumbnail |
 | `ytctl video categories [--region US]` | List category IDs |
@@ -155,7 +155,13 @@ know are ignored.
 ytctl video update dQw4w9WgXcQ --title "Better title"     # description and tags untouched
 ytctl video update dQw4w9WgXcQ --tags ""                  # clears the tags
 ytctl video update dQw4w9WgXcQ --privacy public
+ytctl video update dQw4w9WgXcQ --publish-at 2030-02-01T09:00:00+08:00   # reschedule
+ytctl video update dQw4w9WgXcQ --publish-at ""                          # cancel the schedule
 ```
+
+`--publish-at` works on a private video that has never been public. ytctl refuses to
+schedule a video that is currently public or unlisted unless you also pass
+`--privacy private`, because that takes it offline until the scheduled time.
 
 (The API itself replaces everything you leave out; ytctl reads the video first and sends
 the current values back.)

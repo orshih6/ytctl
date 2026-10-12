@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 	"google.golang.org/api/youtube/v3"
@@ -127,13 +128,17 @@ func newVideoGetCommand() *cobra.Command {
 }
 
 func newVideoUpdateCommand() *cobra.Command {
-	var title, description, tags, category, privacy string
+	var title, description, tags, category, privacy, publishAt string
 
 	cmd := &cobra.Command{
 		Use:   "update <video-id>",
-		Short: "Change a video's title, description, tags, category or privacy",
+		Short: "Change a video's title, description, tags, category, privacy or schedule",
 		Long: "Change a video's metadata. Only the flags you pass are changed; everything\n" +
-			"else about the video is kept as it is.",
+			"else about the video is kept as it is.\n\n" +
+			"--publish-at schedules or reschedules a private video that has never been\n" +
+			"public; --publish-at \"\" cancels the schedule and leaves it private.",
+		Example: "  ytctl video update dQw4w9WgXcQ --title \"Better title\"\n" +
+			"  ytctl video update dQw4w9WgXcQ --publish-at 2030-01-31T09:00:00+08:00",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			var patch yt.VideoPatch
@@ -163,8 +168,21 @@ func newVideoUpdateCommand() *cobra.Command {
 				}
 				patch.PrivacyStatus = &privacy
 			}
+			if flags.Changed("publish-at") {
+				if publishAt != "" {
+					if patch.PrivacyStatus != nil && privacy != "private" {
+						return fmt.Errorf("--publish-at cannot be combined with --privacy %s: a scheduled video is private until its time comes", privacy)
+					}
+					at, err := parsePublishAt(publishAt, time.Now())
+					if err != nil {
+						return err
+					}
+					publishAt = at.UTC().Format(time.RFC3339)
+				}
+				patch.PublishAt = &publishAt
+			}
 			if patch == (yt.VideoPatch{}) {
-				return errors.New("nothing to update: pass at least one of --title, --description, --tags, --category, --privacy")
+				return errors.New("nothing to update: pass at least one of --title, --description, --tags, --category, --privacy, --publish-at")
 			}
 
 			client, err := newClient(cmd)
@@ -184,6 +202,7 @@ func newVideoUpdateCommand() *cobra.Command {
 	cmd.Flags().StringVar(&tags, "tags", "", "new comma-separated tags, replacing the current ones (\"\" clears them)")
 	cmd.Flags().StringVar(&category, "category", "", "new category ID (list them with: ytctl video categories)")
 	cmd.Flags().StringVar(&privacy, "privacy", "", "new privacy: "+strings.Join(privacyStatuses, ", "))
+	cmd.Flags().StringVar(&publishAt, "publish-at", "", "new scheduled publication time, e.g. 2030-01-31T09:00:00+08:00 (\"\" cancels the schedule)")
 	return cmd
 }
 

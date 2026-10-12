@@ -149,6 +149,9 @@ type VideoPatch struct {
 	Tags          *[]string
 	CategoryID    *string
 	PrivacyStatus *string
+	// PublishAt reschedules the video to an RFC 3339 time; an empty
+	// string cancels the schedule and leaves the video private.
+	PublishAt *string
 }
 
 // UpdateVideo changes only the fields set in patch.
@@ -201,9 +204,13 @@ func (c *Client) UpdateVideo(ctx context.Context, id string, patch VideoPatch) (
 		parts = append(parts, "snippet")
 	}
 
-	if patch.PrivacyStatus != nil {
+	if patch.PrivacyStatus != nil || patch.PublishAt != nil {
+		privacy := cur.Status.PrivacyStatus
+		if patch.PrivacyStatus != nil {
+			privacy = *patch.PrivacyStatus
+		}
 		st := &youtube.VideoStatus{
-			PrivacyStatus:           *patch.PrivacyStatus,
+			PrivacyStatus:           privacy,
 			Embeddable:              cur.Status.Embeddable,
 			License:                 cur.Status.License,
 			PublicStatsViewable:     cur.Status.PublicStatsViewable,
@@ -211,8 +218,18 @@ func (c *Client) UpdateVideo(ctx context.Context, id string, patch VideoPatch) (
 			ContainsSyntheticMedia:  cur.Status.ContainsSyntheticMedia,
 			ForceSendFields:         []string{"Embeddable", "PublicStatsViewable", "SelfDeclaredMadeForKids", "ContainsSyntheticMedia"},
 		}
-		// A scheduled video stays scheduled only while it stays private.
-		if *patch.PrivacyStatus == "private" {
+		switch {
+		case patch.PublishAt != nil && *patch.PublishAt != "":
+			// YouTube only schedules private videos. Quietly making a
+			// live video private to schedule it would take it offline,
+			// so that has to be asked for.
+			if privacy != "private" {
+				return nil, fmt.Errorf("video %s is %s, and only a private video can be scheduled; add --privacy private to take it offline until the scheduled time", id, privacy)
+			}
+			st.PublishAt = *patch.PublishAt
+		case patch.PublishAt == nil && privacy == "private":
+			// A scheduled video stays scheduled only while it stays
+			// private.
 			st.PublishAt = cur.Status.PublishAt
 		}
 		update.Status = st
