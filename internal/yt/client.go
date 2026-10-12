@@ -141,6 +141,29 @@ func (c *Client) Video(ctx context.Context, id string) (*youtube.Video, error) {
 	return resp.Items[0], nil
 }
 
+// Videos returns the videos with the given IDs, at most 50, in the order
+// asked for. IDs the API does not know are left out.
+func (c *Client) Videos(ctx context.Context, ids []string) ([]*youtube.Video, error) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	resp, err := c.svc.Videos.List(videoParts).Id(ids...).MaxResults(50).Context(ctx).Do()
+	if err != nil {
+		return nil, explain(err)
+	}
+	byID := make(map[string]*youtube.Video, len(resp.Items))
+	for _, v := range resp.Items {
+		byID[v.Id] = v
+	}
+	videos := make([]*youtube.Video, 0, len(ids))
+	for _, id := range ids {
+		if v, ok := byID[id]; ok {
+			videos = append(videos, v)
+		}
+	}
+	return videos, nil
+}
+
 // VideoPatch names the fields of a video to change; nil leaves a field as
 // it is.
 type VideoPatch struct {

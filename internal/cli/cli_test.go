@@ -123,6 +123,17 @@ func (f *fakeAPI) only(route string) request {
 	return found[0]
 }
 
+// to returns every request made to route, in order.
+func (f *fakeAPI) to(route string) []request {
+	var found []request
+	for _, r := range f.requests {
+		if r.Method+" "+r.Path == route {
+			found = append(found, r)
+		}
+	}
+	return found
+}
+
 func (f *fakeAPI) routes() []string {
 	var out []string
 	for _, r := range f.requests {
@@ -216,17 +227,55 @@ func TestVideoSearchAndList(t *testing.T) {
 	if _, _, err := run(t, "", "video", "list"); err != nil {
 		t.Fatal(err)
 	}
-	wantQuery(t, api.requests[1], map[string]string{"forMine": "true", "type": "video", "maxResults": "25", "order": "date"})
-	if _, ok := api.requests[1].Query["channelId"]; ok {
+	wantQuery(t, api.to("GET /youtube/v3/search")[1], map[string]string{"forMine": "true", "type": "video", "maxResults": "25", "order": "date"})
+	if _, ok := api.to("GET /youtube/v3/search")[1].Query["channelId"]; ok {
 		t.Error("listing own videos sent a channelId")
 	}
 
 	if _, _, err := run(t, "", "video", "list", "--channel", "UC999"); err != nil {
 		t.Fatal(err)
 	}
-	wantQuery(t, api.requests[2], map[string]string{"channelId": "UC999", "type": "video"})
-	if _, ok := api.requests[2].Query["forMine"]; ok {
+	wantQuery(t, api.to("GET /youtube/v3/search")[2], map[string]string{"channelId": "UC999", "type": "video"})
+	if _, ok := api.to("GET /youtube/v3/search")[2].Query["forMine"]; ok {
 		t.Error("listing another channel's videos sent forMine")
+	}
+}
+
+func TestVideoListShowsPrivacyAndSchedule(t *testing.T) {
+	api := newFakeAPI(t)
+	api.responses["GET /youtube/v3/search"] = `{"items":[{"id":{"videoId":"second"}},{"id":{"videoId":"first"}}]}`
+	// Answered out of order: the list must follow the search's order.
+	api.responses["GET /youtube/v3/videos"] = `{"items":[
+		{"id":"first","snippet":{"title":"Public one","publishedAt":"2026-01-01T00:00:00Z"},"status":{"privacyStatus":"public"},"statistics":{"viewCount":"321"}},
+		{"id":"second","snippet":{"title":"Scheduled one","publishedAt":"2026-02-02T00:00:00Z"},"status":{"privacyStatus":"private","publishAt":"2030-03-04T05:06:00Z"}}]}`
+
+	out, _, err := run(t, "", "video", "list")
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantQuery(t, api.only("GET /youtube/v3/videos"), map[string]string{"id": "second,first"})
+
+	lines := strings.Split(strings.TrimSpace(out), "\n")
+	if len(lines) != 3 || !strings.HasPrefix(lines[1], "second") || !strings.HasPrefix(lines[2], "first") {
+		t.Fatalf("rows are not in search order:\n%s", out)
+	}
+	scheduled := time.Date(2030, 3, 4, 5, 6, 0, 0, time.UTC).Local().Format("2006-01-02 15:04")
+	for _, want := range []string{"SCHEDULED FOR", "private", scheduled} {
+		if !strings.Contains(lines[0]+lines[1], want) {
+			t.Errorf("scheduled row lacks %q:\n%s", want, out)
+		}
+	}
+	if !strings.Contains(lines[2], "public") || !strings.Contains(lines[2], "321") {
+		t.Errorf("public row = %q", lines[2])
+	}
+
+	out, _, err = run(t, "", "video", "list", "--json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var videos []map[string]any
+	if err := json.Unmarshal([]byte(out), &videos); err != nil || len(videos) != 2 || dig(videos[0], "status", "publishAt") != "2030-03-04T05:06:00Z" {
+		t.Errorf("--json = %s (%v)", out, err)
 	}
 }
 

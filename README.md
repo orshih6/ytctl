@@ -71,7 +71,7 @@ automatically. `ytctl auth logout` revokes it and deletes the file.
 | Command | What it does |
 |---|---|
 | `ytctl upload <file>` | Upload a video |
-| `ytctl video list [--channel ID]` | List your videos, or a channel's |
+| `ytctl video list [--channel ID]` | List your videos, or a channel's, with privacy, schedule and views |
 | `ytctl video search <query>` | Search YouTube |
 | `ytctl video get <id>` | Details and statistics |
 | `ytctl video update <id>` | Change title, description, tags, category, privacy, schedule |
@@ -170,7 +170,10 @@ the current values back.)
 
 ```bash
 # IDs of my 10 newest videos
-ytctl video list --limit 10 --json | jq -r '.[].id.videoId'
+ytctl video list --limit 10 --json | jq -r '.[].id'
+
+# what is scheduled, and for when
+ytctl video list --json | jq -r '.[] | select(.status.publishAt) | "\(.status.publishAt)  \(.snippet.title)"'
 
 # upload and capture the ID
 id=$(ytctl upload clip.mp4 --meta youtube.md --json -q | jq -r .videoId)

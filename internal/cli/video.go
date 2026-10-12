@@ -66,15 +66,52 @@ func newVideoListCommand() *cobra.Command {
 		Use:   "list",
 		Short: "List your own videos, or another channel's with --channel (100 quota units)",
 		Long: "List your own videos, private and unlisted ones included, or another\n" +
-			"channel's public videos with --channel. Results carry no view counts; use\n" +
-			"`ytctl video get` for those.",
+			"channel's public videos with --channel, with each video's privacy, schedule\n" +
+			"and view count.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if err := errors.Join(checkLimit(limit, 50), oneOf("order", order, searchOrders...)); err != nil {
 				return err
 			}
-			search := yt.VideoSearch{ChannelID: channel, Mine: channel == "", Order: order, Limit: limit}
-			return runSearch(cmd, search)
+			client, err := newClient(cmd)
+			if err != nil {
+				return err
+			}
+			results, err := client.SearchVideos(cmd.Context(), yt.VideoSearch{ChannelID: channel, Mine: channel == "", Order: order, Limit: limit})
+			if err != nil {
+				return err
+			}
+
+			// A search result says nothing about privacy or scheduling,
+			// so the videos themselves are fetched: one more request, for
+			// one quota unit.
+			ids := make([]string, 0, len(results))
+			for _, r := range results {
+				if r.Id != nil && r.Id.VideoId != "" {
+					ids = append(ids, r.Id.VideoId)
+				}
+			}
+			videos, err := client.Videos(cmd.Context(), ids)
+			if err != nil {
+				return err
+			}
+			return emit(cmd, orEmpty(videos), func(w io.Writer) error {
+				rows := make([][]string, 0, len(videos))
+				for _, v := range videos {
+					row := []string{v.Id, "", "", "", "", ""}
+					if v.Snippet != nil {
+						row[1], row[5] = date(v.Snippet.PublishedAt), output.Truncate(v.Snippet.Title, 60)
+					}
+					if v.Status != nil {
+						row[2], row[3] = v.Status.PrivacyStatus, localTime(v.Status.PublishAt)
+					}
+					if v.Statistics != nil {
+						row[4] = count(v.Statistics.ViewCount)
+					}
+					rows = append(rows, row)
+				}
+				return output.Table(w, []string{"ID", "PUBLISHED", "PRIVACY", "SCHEDULED FOR", "VIEWS", "TITLE"}, rows)
+			})
 		},
 	}
 	cmd.Flags().Int64Var(&limit, "limit", 25, "number of results, 1-50")
@@ -292,6 +329,16 @@ func newVideoThumbnailCommand() *cobra.Command {
 	}
 }
 
+// localTime shows an RFC 3339 timestamp in the machine's time zone, to the
+// minute. Anything else is passed through, and nothing stays nothing.
+func localTime(ts string) string {
+	at, err := time.Parse(time.RFC3339, ts)
+	if err != nil {
+		return ts
+	}
+	return at.Local().Format("2006-01-02 15:04")
+}
+
 // checkTitle enforces YouTube's limits on a title before a request (or a
 // whole upload) is spent finding them out.
 func checkTitle(title string) error {
@@ -323,7 +370,7 @@ func writeVideo(w io.Writer, v *youtube.Video) error {
 	if st := v.Status; st != nil {
 		fields = append(fields,
 			output.Field{Name: "Privacy", Value: st.PrivacyStatus},
-			output.Field{Name: "Scheduled for", Value: st.PublishAt},
+			output.Field{Name: "Scheduled for", Value: localTime(st.PublishAt)},
 			output.Field{Name: "Upload status", Value: st.UploadStatus},
 		)
 	}
