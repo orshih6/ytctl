@@ -1,0 +1,8 @@
+/ytctl
+/bin/
+/dist/
+
+# OAuth client downloads and tokens never belong in the repo.
+client_secret*.json
+token.json
+.env
