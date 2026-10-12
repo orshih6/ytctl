@@ -3,6 +3,8 @@ package yt
 import (
 	"errors"
 	"fmt"
+	"html"
+	"regexp"
 
 	"google.golang.org/api/googleapi"
 )
@@ -48,8 +50,12 @@ type apiError struct {
 	err *googleapi.Error
 }
 
+// htmlTag matches the markup the API puts in its messages, which link
+// to its reference pages.
+var htmlTag = regexp.MustCompile(`<[^>]+>`)
+
 func (e *apiError) Error() string {
-	msg := e.err.Message
+	msg := html.UnescapeString(htmlTag.ReplaceAllString(e.err.Message, ""))
 	if msg == "" {
 		msg = "no message"
 	}

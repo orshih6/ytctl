@@ -4,6 +4,7 @@ package output
 import (
 	"encoding/json"
 	"fmt"
+	"html"
 	"io"
 	"strings"
 	"text/tabwriter"
@@ -61,9 +62,10 @@ func Fields(w io.Writer, fields []Field) error {
 }
 
 // Truncate shortens s to at most max characters on one line, marking a cut
-// with an ellipsis.
+// with an ellipsis. Search results arrive with HTML entities in their
+// titles ("don&#39;t"), so those are decoded on the way.
 func Truncate(s string, max int) string {
-	s = strings.Join(strings.Fields(s), " ")
+	s = strings.Join(strings.Fields(html.UnescapeString(s)), " ")
 	if utf8.RuneCountInString(s) <= max {
 		return s
 	}

@@ -92,7 +92,7 @@ func (f *fakeAPI) handle(w http.ResponseWriter, r *http.Request) {
 	if fail {
 		w.WriteHeader(http.StatusForbidden)
 		json.NewEncoder(w).Encode(map[string]any{"error": map[string]any{
-			"code": 403, "message": "the API's own message",
+			"code": 403, "message": "the API&#39;s <code><a href=\"/docs\">own</a></code> message",
 			"errors": []map[string]string{{"reason": reason, "message": "the API's own message"}},
 		}})
 		return
@@ -202,14 +202,14 @@ func TestChannelFindUsesHandleOrUsername(t *testing.T) {
 
 func TestVideoSearchAndList(t *testing.T) {
 	api := newFakeAPI(t)
-	api.responses["GET /youtube/v3/search"] = `{"items":[{"id":{"videoId":"abcdefghijk"},"snippet":{"title":"How kettles work","channelTitle":"Kettle Facts","publishedAt":"2026-01-02T03:04:05Z"}}]}`
+	api.responses["GET /youtube/v3/search"] = `{"items":[{"id":{"videoId":"abcdefghijk"},"snippet":{"title":"How kettles don&#39;t work","channelTitle":"Kettle Facts","publishedAt":"2026-01-02T03:04:05Z"}}]}`
 
 	out, _, err := run(t, "", "video", "search", "kettles", "--limit", "5", "--order", "viewCount")
 	if err != nil {
 		t.Fatal(err)
 	}
 	wantQuery(t, api.requests[0], map[string]string{"q": "kettles", "type": "video", "maxResults": "5", "order": "viewCount", "part": "snippet"})
-	if !strings.Contains(out, "abcdefghijk") || !strings.Contains(out, "2026-01-02") {
+	if !strings.Contains(out, "abcdefghijk") || !strings.Contains(out, "2026-01-02") || !strings.Contains(out, "don't") {
 		t.Errorf("unexpected table:\n%s", out)
 	}
 
@@ -481,6 +481,9 @@ func TestQuotaErrorIsExplained(t *testing.T) {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("error lacks %q: %v", want, err)
 		}
+	}
+	if !strings.Contains(err.Error(), "the API's own message") {
+		t.Errorf("the API's message was not cleaned of markup: %v", err)
 	}
 	if strings.Contains(err.Error(), "\n") {
 		t.Errorf("error spans several lines: %q", err)
