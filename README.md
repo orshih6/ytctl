@@ -10,6 +10,10 @@ https://youtu.be/dQw4w9WgXcQ
 Privacy: private
 ```
 
+> **Status: pre-release.** Everything except `upload` has been run against the real API.
+> Uploading is covered by automated tests but has not yet completed a real upload, so
+> there is no tagged release yet. Install from source for now.
+
 It signs in as you, with an OAuth client you create in your own Google Cloud project. There
 is no server in between and nothing is sent anywhere except to Google.
 
@@ -19,8 +23,8 @@ is no server in between and nothing is sent anywhere except to Google.
 go install github.com/orshih6/ytctl/cmd/ytctl@latest
 ```
 
-or download a binary for macOS, Linux or Windows from the
-[releases page](https://github.com/orshih6/ytctl/releases).
+Binaries for macOS, Linux and Windows will be on the
+[releases page](https://github.com/orshih6/ytctl/releases) from the first tagged release.
 
 ## Setup
 
