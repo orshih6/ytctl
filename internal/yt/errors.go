@@ -12,7 +12,7 @@ import (
 // hints explain the API error reasons a user can actually do something
 // about. The API's own messages for these are either terse or misleading.
 var hints = map[string]string{
-	"quotaExceeded":                         "the Google Cloud project is out of YouTube API quota for today. The default is 10,000 units a day, resetting at midnight Pacific time; an upload costs 1,600 and a search 100",
+	"quotaExceeded":                         "the Google Cloud project has used up today's YouTube API quota. By default uploads and searches are each limited to 100 calls a day, and everything else shares 10,000 units a day; all of it resets at midnight Pacific time",
 	"uploadLimitExceeded":                   "the channel has reached YouTube's limit on uploads for now; try again in a day",
 	"youtubeSignupRequired":                 "this Google account has no YouTube channel yet; create one at youtube.com first",
 	"insufficientPermissions":               "the stored sign-in does not cover this action; run `ytctl auth login` again and grant every permission it asks for",

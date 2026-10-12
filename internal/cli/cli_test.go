@@ -224,15 +224,16 @@ func TestVideoSearchAndList(t *testing.T) {
 		t.Errorf("unexpected table:\n%s", out)
 	}
 
-	if _, _, err := run(t, "", "video", "list"); err != nil {
+	// Any order but the default has to go through a search.
+	if _, _, err := run(t, "", "video", "list", "--order", "viewCount"); err != nil {
 		t.Fatal(err)
 	}
-	wantQuery(t, api.to("GET /youtube/v3/search")[1], map[string]string{"forMine": "true", "type": "video", "maxResults": "25", "order": "date"})
+	wantQuery(t, api.to("GET /youtube/v3/search")[1], map[string]string{"forMine": "true", "type": "video", "maxResults": "25", "order": "viewCount"})
 	if _, ok := api.to("GET /youtube/v3/search")[1].Query["channelId"]; ok {
 		t.Error("listing own videos sent a channelId")
 	}
 
-	if _, _, err := run(t, "", "video", "list", "--channel", "UC999"); err != nil {
+	if _, _, err := run(t, "", "video", "list", "--channel", "UC999", "--order", "title"); err != nil {
 		t.Fatal(err)
 	}
 	wantQuery(t, api.to("GET /youtube/v3/search")[2], map[string]string{"channelId": "UC999", "type": "video"})
@@ -243,8 +244,9 @@ func TestVideoSearchAndList(t *testing.T) {
 
 func TestVideoListShowsPrivacyAndSchedule(t *testing.T) {
 	api := newFakeAPI(t)
-	api.responses["GET /youtube/v3/search"] = `{"items":[{"id":{"videoId":"second"}},{"id":{"videoId":"first"}}]}`
-	// Answered out of order: the list must follow the search's order.
+	api.responses["GET /youtube/v3/channels"] = `{"items":[{"id":"UC1","contentDetails":{"relatedPlaylists":{"uploads":"UU1"}}}]}`
+	api.responses["GET /youtube/v3/playlistItems"] = `{"items":[{"contentDetails":{"videoId":"second"}},{"contentDetails":{"videoId":"first"}}]}`
+	// Answered out of order: the list must follow the playlist's order.
 	api.responses["GET /youtube/v3/videos"] = `{"items":[
 		{"id":"first","snippet":{"title":"Public one","publishedAt":"2026-01-01T00:00:00Z"},"status":{"privacyStatus":"public"},"statistics":{"viewCount":"321"}},
 		{"id":"second","snippet":{"title":"Scheduled one","publishedAt":"2026-02-02T00:00:00Z"},"status":{"privacyStatus":"private","publishAt":"2030-03-04T05:06:00Z"}}]}`
@@ -253,7 +255,12 @@ func TestVideoListShowsPrivacyAndSchedule(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	wantQuery(t, api.only("GET /youtube/v3/channels"), map[string]string{"mine": "true"})
+	wantQuery(t, api.only("GET /youtube/v3/playlistItems"), map[string]string{"playlistId": "UU1", "maxResults": "25"})
 	wantQuery(t, api.only("GET /youtube/v3/videos"), map[string]string{"id": "second,first"})
+	if len(api.to("GET /youtube/v3/search")) != 0 {
+		t.Error("the default listing spent a search")
+	}
 
 	lines := strings.Split(strings.TrimSpace(out), "\n")
 	if len(lines) != 3 || !strings.HasPrefix(lines[1], "second") || !strings.HasPrefix(lines[2], "first") {
@@ -269,9 +276,12 @@ func TestVideoListShowsPrivacyAndSchedule(t *testing.T) {
 		t.Errorf("public row = %q", lines[2])
 	}
 
-	out, _, err = run(t, "", "video", "list", "--json")
+	out, _, err = run(t, "", "video", "list", "--channel", "UC1", "--json")
 	if err != nil {
 		t.Fatal(err)
+	}
+	if got := api.to("GET /youtube/v3/channels")[1].Query; got["id"] != "UC1" || got["mine"] != "" {
+		t.Errorf("channel lookup for --channel = %v", got)
 	}
 	var videos []map[string]any
 	if err := json.Unmarshal([]byte(out), &videos); err != nil || len(videos) != 2 || dig(videos[0], "status", "publishAt") != "2030-03-04T05:06:00Z" {
@@ -467,6 +477,18 @@ func TestPlaylistUpdateKeepsWhatWasNotChanged(t *testing.T) {
 	}
 }
 
+func TestPlaylistUpdateKeepsPodcastStatus(t *testing.T) {
+	api := newFakeAPI(t)
+	api.responses["GET /youtube/v3/playlists"] = `{"items":[{"id":"PL1","snippet":{"title":"Show"},"status":{"privacyStatus":"public","podcastStatus":"enabled"}}]}`
+
+	if _, _, err := run(t, "", "playlist", "update", "PL1", "--description", "New"); err != nil {
+		t.Fatal(err)
+	}
+	if got := dig(api.only("PUT /youtube/v3/playlists").Body, "status", "podcastStatus"); got != "enabled" {
+		t.Errorf("status.podcastStatus = %v, want it carried over", got)
+	}
+}
+
 func TestPlaylistDeleteAsksFirst(t *testing.T) {
 	api := newFakeAPI(t)
 	api.responses["GET /youtube/v3/playlists"] = `{"items":[{"id":"PL1","snippet":{"title":"Favourites"}}]}`
@@ -586,7 +608,7 @@ func TestQuotaErrorIsExplained(t *testing.T) {
 	if err == nil {
 		t.Fatal("no error")
 	}
-	for _, want := range []string{"10,000", "1,600", "quotaExceeded"} {
+	for _, want := range []string{"10,000", "100 calls a day", "quotaExceeded"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("error lacks %q: %v", want, err)
 		}
@@ -618,6 +640,9 @@ func TestBuildUpload(t *testing.T) {
 			t.Errorf("video = %+v / %+v", v.Snippet, v.Status)
 		}
 		data, _ := json.Marshal(v)
+		if strings.Contains(string(data), "containsSyntheticMedia") {
+			t.Errorf("synthetic media was declared without being asked: %s", data)
+		}
 		if !strings.Contains(string(data), `"selfDeclaredMadeForKids":false`) {
 			t.Errorf("made-for-kids=false is not stated explicitly: %s", data)
 		}
@@ -735,7 +760,7 @@ func TestUploadNotesWhenYouTubeOverridesPrivacy(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(out, "Privacy: private") || !strings.Contains(stderr, "audit") {
+	if !strings.Contains(out, "Privacy: private") || !strings.Contains(stderr, "ytctl video update newvid --privacy public") {
 		t.Errorf("stdout = %q\nstderr = %q", out, stderr)
 	}
 }

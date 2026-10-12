@@ -42,8 +42,10 @@ func newVideoSearchCommand() *cobra.Command {
 	)
 	cmd := &cobra.Command{
 		Use:   "search <query>",
-		Short: "Search all of YouTube for videos (100 quota units)",
-		Args:  cobra.ExactArgs(1),
+		Short: "Search all of YouTube for videos",
+		Long: "Search all of YouTube for videos. YouTube allows a project 100 searches a\n" +
+			"day by default, counted separately from the rest of its quota.",
+		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if err := errors.Join(checkLimit(limit, 50), oneOf("order", order, searchOrders...)); err != nil {
 				return err
@@ -64,10 +66,13 @@ func newVideoListCommand() *cobra.Command {
 	)
 	cmd := &cobra.Command{
 		Use:   "list",
-		Short: "List your own videos, or another channel's with --channel (100 quota units)",
+		Short: "List your own videos, or another channel's with --channel",
 		Long: "List your own videos, private and unlisted ones included, or another\n" +
 			"channel's public videos with --channel, with each video's privacy, schedule\n" +
-			"and view count.",
+			"and view count.\n\n" +
+			"The default order, newest first, reads the channel's uploads. Any other\n" +
+			"--order has to search instead, which uses one of the 100 searches a day\n" +
+			"that YouTube allows a project by default.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if err := errors.Join(checkLimit(limit, 50), oneOf("order", order, searchOrders...)); err != nil {
@@ -77,20 +82,25 @@ func newVideoListCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			results, err := client.SearchVideos(cmd.Context(), yt.VideoSearch{ChannelID: channel, Mine: channel == "", Order: order, Limit: limit})
-			if err != nil {
-				return err
-			}
-
-			// A search result says nothing about privacy or scheduling,
-			// so the videos themselves are fetched: one more request, for
-			// one quota unit.
-			ids := make([]string, 0, len(results))
-			for _, r := range results {
-				if r.Id != nil && r.Id.VideoId != "" {
-					ids = append(ids, r.Id.VideoId)
+			var ids []string
+			if order == "date" {
+				if ids, err = client.Uploads(cmd.Context(), channel, limit); err != nil {
+					return err
+				}
+			} else {
+				results, err := client.SearchVideos(cmd.Context(), yt.VideoSearch{ChannelID: channel, Mine: channel == "", Order: order, Limit: limit})
+				if err != nil {
+					return err
+				}
+				for _, r := range results {
+					if r.Id != nil && r.Id.VideoId != "" {
+						ids = append(ids, r.Id.VideoId)
+					}
 				}
 			}
+
+			// Neither source says anything about privacy or scheduling,
+			// so the videos themselves are fetched.
 			videos, err := client.Videos(cmd.Context(), ids)
 			if err != nil {
 				return err
@@ -115,7 +125,7 @@ func newVideoListCommand() *cobra.Command {
 		},
 	}
 	cmd.Flags().Int64Var(&limit, "limit", 25, "number of results, 1-50")
-	cmd.Flags().StringVar(&order, "order", "date", "sort order: "+strings.Join(searchOrders, ", "))
+	cmd.Flags().StringVar(&order, "order", "date", "sort order: "+strings.Join(searchOrders, ", ")+" (all but date use a search)")
 	cmd.Flags().StringVar(&channel, "channel", "", "list this channel's videos instead of your own")
 	return cmd
 }
@@ -305,7 +315,7 @@ func newVideoCategoriesCommand() *cobra.Command {
 func newVideoThumbnailCommand() *cobra.Command {
 	return &cobra.Command{
 		Use:   "thumbnail <video-id> <image>",
-		Short: "Set a video's custom thumbnail from a JPEG or PNG (at most 2 MB)",
+		Short: "Set a video's custom thumbnail from a JPEG or PNG (at most 50 MB)",
 		Args:  cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			f, err := os.Open(args[1])

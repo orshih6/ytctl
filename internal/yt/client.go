@@ -107,7 +107,8 @@ type VideoSearch struct {
 }
 
 // SearchVideos runs a video search. Results carry a snippet only; use
-// Video for statistics. Each call costs 100 quota units.
+// Videos for the rest. Searches have a daily allowance of their own, 100
+// calls by default, separate from the quota every other call draws on.
 func (c *Client) SearchVideos(ctx context.Context, s VideoSearch) ([]*youtube.SearchResult, error) {
 	call := c.svc.Search.List([]string{"snippet"}).Type("video").MaxResults(s.Limit)
 	if s.Query != "" {
@@ -139,6 +140,52 @@ func (c *Client) Video(ctx context.Context, id string) (*youtube.Video, error) {
 		return nil, &NotFoundError{"video", id}
 	}
 	return resp.Items[0], nil
+}
+
+// Uploads returns the IDs of a channel's most recent uploads, newest
+// first: the signed-in account's own, private ones included, if channelID
+// is empty. It reads the channel's uploads playlist, which unlike a search
+// does not draw on the day's search allowance.
+func (c *Client) Uploads(ctx context.Context, channelID string, limit int64) ([]string, error) {
+	call := c.svc.Channels.List([]string{"contentDetails"})
+	if channelID != "" {
+		call = call.Id(channelID)
+	} else {
+		call = call.Mine(true)
+	}
+	resp, err := call.Context(ctx).Do()
+	if err != nil {
+		return nil, explain(err)
+	}
+	if len(resp.Items) == 0 {
+		if channelID == "" {
+			return nil, errors.New("this Google account has no YouTube channel")
+		}
+		return nil, &NotFoundError{"channel", channelID}
+	}
+	details := resp.Items[0].ContentDetails
+	if details == nil || details.RelatedPlaylists == nil || details.RelatedPlaylists.Uploads == "" {
+		return nil, nil
+	}
+
+	items, err := c.svc.PlaylistItems.List([]string{"contentDetails"}).
+		PlaylistId(details.RelatedPlaylists.Uploads).MaxResults(limit).Context(ctx).Do()
+	if err != nil {
+		// A channel that has never uploaded has an uploads playlist ID
+		// that does not resolve.
+		var nf *googleapi.Error
+		if errors.As(err, &nf) && nf.Code == http.StatusNotFound {
+			return nil, nil
+		}
+		return nil, explain(err)
+	}
+	ids := make([]string, 0, len(items.Items))
+	for _, it := range items.Items {
+		if it.ContentDetails != nil && it.ContentDetails.VideoId != "" {
+			ids = append(ids, it.ContentDetails.VideoId)
+		}
+	}
+	return ids, nil
 }
 
 // Videos returns the videos with the given IDs, at most 50, in the order
@@ -368,7 +415,9 @@ func (c *Client) UpdatePlaylist(ctx context.Context, id string, patch PlaylistPa
 			DefaultLanguage: cur.Snippet.DefaultLanguage,
 			ForceSendFields: []string{"Description"},
 		},
-		Status: &youtube.PlaylistStatus{PrivacyStatus: cur.Status.PrivacyStatus},
+		// podcastStatus is carried over so that editing a podcast's
+		// playlist does not stop it being a podcast.
+		Status: &youtube.PlaylistStatus{PrivacyStatus: cur.Status.PrivacyStatus, PodcastStatus: cur.Status.PodcastStatus},
 	}
 	if patch.Title != nil {
 		update.Snippet.Title = *patch.Title

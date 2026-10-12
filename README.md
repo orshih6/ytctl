@@ -108,6 +108,8 @@ ytctl upload clip.mp4 \
 - `--category` defaults to `28` (Science & Technology); see `ytctl video categories`.
 - Subscribers are not notified unless you pass `--notify-subscribers`.
 - The video is declared *not* made for kids unless you pass `--made-for-kids`.
+- `--synthetic-media` discloses realistic altered or AI-generated content, as YouTube
+  requires for such videos.
 - Uploads are resumable and sent in 8 MB chunks, so a dropped connection costs one chunk,
   not the whole file.
 - A vertical video of three minutes or less becomes a Short on its own; there is no flag
@@ -184,14 +186,15 @@ success, 1 on failure and 130 when interrupted.
 
 ## Things YouTube decides
 
-- **Quota.** A Google Cloud project gets 10,000 units a day by default. An upload costs
-  1,600 (about six a day); `video search` and `video list` cost 100; most other calls cost
-  1 to 50. Quota resets at midnight Pacific time.
-- **Uploads locked to private.** Videos uploaded through a Cloud project that has not passed
-  [YouTube's API audit](https://support.google.com/youtube/contact/yt_api_form) are forced to
-  private, whatever `--privacy` says. ytctl tells you when that happens. You can still make
-  the video public by hand in YouTube Studio.
-- **Custom thumbnails** need a verified channel, and the image must be at most 2 MB.
+- **Quota.** By default a Google Cloud project gets 100 uploads a day and 100 searches a
+  day, each counted on its own, and 10,000 units a day for everything else (reads cost 1,
+  writes cost 50). All of it resets at midnight Pacific time. `video search` uses a search;
+  `video list` does not, unless you pass an `--order` other than `date`.
+- **Privacy can be overridden.** YouTube may give an upload a different privacy than you
+  asked for, for example from the channel's upload defaults. ytctl tells you when that
+  happens and how to change it.
+- **Custom thumbnails** need a channel that is allowed to use them (YouTube asks for phone
+  verification), and the image must be a JPEG or PNG of at most 50 MB.
 - `channel find` with a plain name looks up a *legacy username*, which most channels do not
   have. Use the `@handle`.
 

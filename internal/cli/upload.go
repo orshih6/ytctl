@@ -26,6 +26,8 @@ type uploadOptions struct {
 	Category    string
 	PublishAt   string
 	MadeForKids bool
+	// SyntheticMedia discloses realistic altered or AI-generated content.
+	SyntheticMedia bool
 }
 
 // uploadResult is what `upload --json` prints.
@@ -50,7 +52,7 @@ func newUploadCommand() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "upload <video-file>",
-		Short: "Upload a video (1,600 quota units)",
+		Short: "Upload a video",
 		Long: "Upload a video file. It is uploaded as private unless --privacy says\n" +
 			"otherwise.\n\n" +
 			"--meta reads the title, description and tags from a Markdown file with\n" +
@@ -163,7 +165,7 @@ func newUploadCommand() *cobra.Command {
 				return err
 			}
 			if result.PrivacyStatus != video.Status.PrivacyStatus {
-				fmt.Fprintf(cmd.ErrOrStderr(), "Note: asked for %s but YouTube made the video %s. Uploads from a Google Cloud project that has not passed YouTube's API audit are locked to private.\n", video.Status.PrivacyStatus, result.PrivacyStatus)
+				fmt.Fprintf(cmd.ErrOrStderr(), "Note: asked for %s but YouTube made the video %s. YouTube can override the privacy of an upload, for example from the channel's upload defaults; change it with: ytctl video update %s --privacy %s\n", video.Status.PrivacyStatus, result.PrivacyStatus, result.VideoID, video.Status.PrivacyStatus)
 			}
 			if len(followUp) > 0 {
 				return fmt.Errorf("the video was uploaded as %s, but %w", uploaded.Id, errors.Join(followUp...))
@@ -181,8 +183,9 @@ func newUploadCommand() *cobra.Command {
 	f.StringVar(&opts.Category, "category", defaultCategory, "category ID (list them with: ytctl video categories)")
 	f.StringVar(&opts.PublishAt, "publish-at", "", "schedule publication, e.g. 2030-01-31T09:00:00+08:00")
 	f.BoolVar(&opts.MadeForKids, "made-for-kids", false, "declare the video as made for kids")
+	f.BoolVar(&opts.SyntheticMedia, "synthetic-media", false, "disclose that the video contains realistic altered or AI-generated content")
 	f.BoolVar(&notify, "notify-subscribers", false, "notify the channel's subscribers about the upload")
-	f.StringVar(&thumbnail, "thumbnail", "", "JPEG or PNG to set as the thumbnail after the upload")
+	f.StringVar(&thumbnail, "thumbnail", "", "JPEG or PNG (at most 50 MB) to set as the thumbnail after the upload")
 	f.StringVar(&playlist, "playlist", "", "playlist ID to add the video to after the upload")
 	return cmd
 }
@@ -209,6 +212,7 @@ func buildUpload(opts uploadOptions, now time.Time) (*youtube.Video, error) {
 	status := &youtube.VideoStatus{
 		PrivacyStatus:           opts.Privacy,
 		SelfDeclaredMadeForKids: opts.MadeForKids,
+		ContainsSyntheticMedia:  opts.SyntheticMedia,
 		// "Not made for kids" has to be said out loud, or YouTube leaves
 		// the question open and asks it again in Studio.
 		ForceSendFields: []string{"SelfDeclaredMadeForKids"},
