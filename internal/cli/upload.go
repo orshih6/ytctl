@@ -1,9 +1,11 @@
 package cli
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"strings"
 	"time"
@@ -51,16 +53,18 @@ func newUploadCommand() *cobra.Command {
 	)
 
 	cmd := &cobra.Command{
-		Use:   "upload <video-file>",
+		Use:   "upload <video-file | url>",
 		Short: "Upload a video",
-		Long: "Upload a video file. It is uploaded as private unless --privacy says\n" +
-			"otherwise.\n\n" +
+		Long: "Upload a video from a local file, or from an http(s) URL that serves the\n" +
+			"file itself: it is streamed to YouTube without being saved first. The video\n" +
+			"is uploaded as private unless --privacy says otherwise.\n\n" +
 			"--meta reads the title, description and tags from a Markdown file with\n" +
 			"\"## Title\", \"## Description\" and \"## Tags\" sections; a flag given as\n" +
 			"well overrides that field.\n\n" +
 			"--publish-at schedules the video: YouTube only schedules private videos,\n" +
 			"so it is uploaded as private and goes public at that time.",
 		Example: "  ytctl upload out/video.mp4 --meta youtube.md\n" +
+			"  ytctl upload https://example.com/files/video.mp4 --title \"From a link\"\n" +
 			"  ytctl upload clip.mp4 --title \"My clip #Shorts\" --tags a,b --publish-at 2030-01-31T09:00:00+08:00",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -95,18 +99,6 @@ func newUploadCommand() *cobra.Command {
 
 			// Everything that can be checked locally is checked before the
 			// upload, which is the slow and quota-expensive step.
-			file, err := os.Open(args[0])
-			if err != nil {
-				return err
-			}
-			defer file.Close()
-			info, err := file.Stat()
-			if err != nil {
-				return err
-			}
-			if info.IsDir() || info.Size() == 0 {
-				return fmt.Errorf("%s is not a video file", args[0])
-			}
 			var thumb *os.File
 			if thumbnail != "" {
 				if thumb, err = os.Open(thumbnail); err != nil {
@@ -114,14 +106,19 @@ func newUploadCommand() *cobra.Command {
 				}
 				defer thumb.Close()
 			}
+			source, size, err := openSource(cmd.Context(), args[0])
+			if err != nil {
+				return err
+			}
+			defer source.Close()
 
 			client, err := newClient(cmd)
 			if err != nil {
 				return err
 			}
 
-			progress := newProgress(stderr, info.Size())
-			uploaded, err := client.Upload(cmd.Context(), video, notify, file, progress.update)
+			progress := newProgress(stderr, size)
+			uploaded, err := client.Upload(cmd.Context(), video, notify, source, progress.update)
 			progress.finish()
 			if err != nil {
 				return fmt.Errorf("upload failed: %w", err)
@@ -188,6 +185,46 @@ func newUploadCommand() *cobra.Command {
 	f.StringVar(&thumbnail, "thumbnail", "", "JPEG or PNG (at most 50 MB) to set as the thumbnail after the upload")
 	f.StringVar(&playlist, "playlist", "", "playlist ID to add the video to after the upload")
 	return cmd
+}
+
+// openSource opens the video to upload: a local file, or the body of an
+// http(s) URL. size is -1 when a server does not say how much is coming.
+func openSource(ctx context.Context, source string) (rc io.ReadCloser, size int64, err error) {
+	if !strings.HasPrefix(source, "http://") && !strings.HasPrefix(source, "https://") {
+		file, err := os.Open(source)
+		if err != nil {
+			return nil, 0, err
+		}
+		info, err := file.Stat()
+		if err == nil && (info.IsDir() || info.Size() == 0) {
+			err = fmt.Errorf("%s is not a video file", source)
+		}
+		if err != nil {
+			file.Close()
+			return nil, 0, err
+		}
+		return file, info.Size(), nil
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, source, nil)
+	if err != nil {
+		return nil, 0, fmt.Errorf("invalid URL %q: %w", source, err)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, 0, fmt.Errorf("fetching the video: %w", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		resp.Body.Close()
+		return nil, 0, fmt.Errorf("fetching the video: the server answered %s", resp.Status)
+	}
+	// A share link to a page about the video, rather than to the file, is
+	// the usual mistake. Catching it here saves sending YouTube a web page.
+	if ct := resp.Header.Get("Content-Type"); strings.HasPrefix(ct, "text/") || strings.HasPrefix(ct, "application/json") {
+		resp.Body.Close()
+		return nil, 0, fmt.Errorf("%s serves a web page (%s), not a video file; use a direct link to the file", source, ct)
+	}
+	return resp.Body, resp.ContentLength, nil
 }
 
 // buildUpload validates the options and turns them into the resource to
@@ -268,7 +305,11 @@ func newProgress(w io.Writer, total int64) *progress {
 		}
 	}
 	if !p.live && w != io.Discard {
-		fmt.Fprintf(w, "Uploading %.1f MB...\n", mb(total))
+		if total > 0 {
+			fmt.Fprintf(w, "Uploading %.1f MB...\n", mb(total))
+		} else {
+			fmt.Fprintln(w, "Uploading...")
+		}
 	}
 	return p
 }
@@ -278,6 +319,10 @@ func (p *progress) update(sent int64) {
 		return
 	}
 	p.drawn = true
+	if p.total <= 0 {
+		fmt.Fprintf(p.w, "\rUploading %.1f MB", mb(sent))
+		return
+	}
 	fmt.Fprintf(p.w, "\rUploading %.1f / %.1f MB (%d%%)", mb(sent), mb(p.total), sent*100/p.total)
 }
 

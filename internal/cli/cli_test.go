@@ -735,6 +735,46 @@ func TestUpload(t *testing.T) {
 	}
 }
 
+func TestUploadFromURL(t *testing.T) {
+	api := newFakeAPI(t)
+	api.responses["POST /upload/youtube/v3/videos"] = `{"id":"newvid","status":{"privacyStatus":"private"}}`
+	host := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/video.mp4":
+			w.Header().Set("Content-Type", "video/mp4")
+			io.WriteString(w, "bytes from the web")
+		case "/watch":
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			io.WriteString(w, "<html>a page about the video</html>")
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer host.Close()
+
+	for _, bad := range []string{"/watch", "/gone.mp4"} {
+		_, _, err := run(t, "", "upload", host.URL+bad, "--title", "T")
+		if err == nil {
+			t.Errorf("upload of %s succeeded", bad)
+		}
+	}
+	if len(api.requests) != 0 {
+		t.Fatalf("an unusable URL still reached the API: %v", api.routes())
+	}
+
+	out, _, err := run(t, "", "upload", host.URL+"/video.mp4", "--title", "From a link")
+	if err != nil {
+		t.Fatal(err)
+	}
+	up := api.only("POST /upload/youtube/v3/videos")
+	if string(up.Media) != "bytes from the web" || dig(up.Body, "snippet", "title") != "From a link" {
+		t.Errorf("media = %q, body = %v", up.Media, up.Body)
+	}
+	if !strings.Contains(out, "newvid") {
+		t.Errorf("output = %q", out)
+	}
+}
+
 func TestUploadReportsVideoWhenFollowUpFails(t *testing.T) {
 	api := newFakeAPI(t)
 	api.responses["POST /upload/youtube/v3/videos"] = `{"id":"newvid","status":{"privacyStatus":"private"}}`

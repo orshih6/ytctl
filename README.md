@@ -74,7 +74,7 @@ automatically. `ytctl auth logout` revokes it and deletes the file.
 
 | Command | What it does |
 |---|---|
-| `ytctl upload <file>` | Upload a video |
+| `ytctl upload <file \| url>` | Upload a video from a file or a direct link |
 | `ytctl video list [--channel ID]` | List your videos, or a channel's, with privacy, schedule and views |
 | `ytctl video search <query>` | Search YouTube |
 | `ytctl video get <id>` | Details and statistics |
@@ -106,6 +106,9 @@ ytctl upload clip.mp4 \
   --playlist PLxxxxxxxx
 ```
 
+- The source can be a local file or a direct `http(s)` link to the file
+  (`ytctl upload https://example.com/video.mp4 --title ...`); a link is streamed straight
+  to YouTube without being saved to disk. A link to a web page about a video is refused.
 - Videos are uploaded as **private** unless `--privacy` says otherwise.
 - `--publish-at 2030-01-31T09:00:00+08:00` schedules the video. YouTube only schedules
   private videos, so it is uploaded private and goes public at that time.
